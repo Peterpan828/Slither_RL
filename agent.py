@@ -173,8 +173,9 @@ def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn
     criterion = nn.MSELoss()
     optimizer = optim.Adam(dqn.parameters(), lr=lr)
     
-    env = torch.stack(env_list[:len(reward_list)-1])
-    action_list = action_list[:len(reward_list)-1]
+    #env = torch.stack(env_list[:len(reward_list)-1])
+    env = torch.stack(env_list)
+    #action_list = action_list[:len(reward_list)-1]
     reward = torch.tensor(reward_list[1:], dtype=torch.float32).view(-1,1)
     reward = reward.to(device)
     
@@ -193,7 +194,7 @@ def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn
         
         print(len(indices))
         print(len(action_list))
-        action_list_sample = [action_list[i] for i in indices]
+        action_list_sample = [action_list[j] for j in indices]
 
         pred = dqn(env_sample)
         pred = pred[torch.arange(pred.shape[0]), action_list_sample]
@@ -280,7 +281,7 @@ if __name__ == "__main__":
             print('-----lr is {}-----'.format(lr))
             print('-----epsilon is {}-----'.format(epsilon))
 
-        epoch += 1
+        
         score, dead = read_score(driver)
         
         if count >= 20:
@@ -301,7 +302,7 @@ if __name__ == "__main__":
                 final_score_list.append(final_score)
 
                 if len(env_list)!= 0:
-                    #reward_list.append(-0.5) # reward when died
+                    
                     reward_list.append(-50) # reward when died
                     tensor_zero = torch.tensor(0).float().to(device)
                     tensor_zero = tensor_zero.to(device)
@@ -322,7 +323,7 @@ if __name__ == "__main__":
                 time.sleep(0.1)
 
         else:
-
+            epoch += 1
             count = 0
 
             reward = Reward(prev_score, score)
