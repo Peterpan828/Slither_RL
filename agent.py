@@ -155,80 +155,58 @@ def read_score(driver):
     return score, dead
 
 
-Transition = namedtuple('Transition',
-                        ('state', 'action', 'next_state', 'reward'))
-
-
-class ReplayMemory(object):
-
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
-
-    def push(self, *args):
-        """transition 저장"""
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = Transition(*args)
-        self.position = (self.position + 1) % self.capacity
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
-
 def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn, lr):
+
+    batch_size = 128
+    max_memory = 10000
+
+    if len(reward_list) < batch_size + 1:
+        return
+
+    if len(reward_list) > max_memory:
+        env_list = env_list[-max_memory:]
+        reward_list = reward_list[-max_memory:]
+        target_list = target_list[-max_memory:]
+        action_list = action_list[-max_memory:]
 
     dqn.train()
     criterion = nn.MSELoss()
     optimizer = optim.Adam(dqn.parameters(), lr=lr)
-    #max_grad_norm = 1.
     
     env = torch.stack(env_list[:len(reward_list)-1])
     action_list = action_list[:len(reward_list)-1]
-    #print(env.shape)
     reward = torch.tensor(reward_list[1:], dtype=torch.float32).view(-1,1)
     reward = reward.to(device)
-    #print(reward.shape)
-    #print('reward is {}'.format(reward))
+    
     Q_target = torch.stack(target_list[1:])
     Q_target = Q_target.view(-1, 1)
-    #print('Q_target is {}'.format(Q_target))
+    
     label = reward + discount_factor * Q_target
-    #label = reward
-    #print('label is {}'.format(label))
-    #time.sleep(1000)
-    #print(Q_target.shape)
-    #print(label.shape)
     loss_total = 0.
 
-    for i in range(3):
+    print('-----Training start-----')
+    for i in range(10):
 
-        pred = dqn(env)
-        #pred, _ = torch.max(pred, dim=1)
-        pred = pred[torch.arange(pred.shape[0]), action_list]
-        #print('prediction is {}'.format(pred))
-        #time.sleep(1000)
+        indices = random.sample(range(len(label)), batch_size)
+        env_sample = env[indices]
+        label_sample = label[indices]
+        
+        print(len(indices))
+        print(len(action_list))
+        action_list_sample = [action_list[i] for i in indices]
+
+        pred = dqn(env_sample)
+        pred = pred[torch.arange(pred.shape[0]), action_list_sample]
         pred = pred.view(-1, 1)
-        #print(pred.shape)
-        #print('pred is {}'.format(pred))
-        #print('label is {}'.format(label))
-        #time.sleep(1000)
-        loss = criterion(pred, label)
+
+        loss = criterion(pred, label_sample)
         loss.backward()
-        #torch.nn.utils.clip_grad_norm_(dqn.parameters(), max_grad_norm)
+
         optimizer.step()
         loss_total += loss
-
-    target_dqn.load_state_dict(dqn.state_dict())
-    env_list.clear()
-    reward_list.clear()
-    target_list.clear()
-    action_list.clear()
-    print('loss is {}'.format(loss_total / 20))
-    return loss_total / 20
+    print('-----Training Finished-----')
+    print('loss is {}'.format(loss_total / 10))
+    return loss_total / 10
 
     
 if __name__ == "__main__":
@@ -286,12 +264,15 @@ if __name__ == "__main__":
     epoch = 0
     count = 0
     lr = 5e-4
+    episode = 0
 
     while True:
         
-        if epoch == 10000:
+        if episode == 10:
             break
         
+        if episode % 5 == 0:
+            target_dqn.load_state_dict(dqn.state_dict())
         
         if epoch % 1000 == 999:
             lr = lr * 0.95
@@ -325,16 +306,13 @@ if __name__ == "__main__":
                     tensor_zero = torch.tensor(0).float().to(device)
                     tensor_zero = tensor_zero.to(device)
                     target_list.append(tensor_zero)
-                    print('-----Training(Dead)-----')
-                    #print(target_list)
-                    loss = train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn, lr)
-                    loss_list.append(loss)
-                    print('-----Finished(Dead)-----')
-
+                    
+                print('-----episode is {}-----'.format(episode))
                 print("-----Epoch is {}-----".format(epoch))
                 print('Final score is {}'.format(final_score))
                 driver.close()
                 count = 0
+                episode += 1
                 driver = open_and_size_browser_window(width=width, height=height)
                 start_game(1306, 228) 
                 start_game(722, 600)
@@ -361,11 +339,14 @@ if __name__ == "__main__":
 
             with torch.no_grad():
                 Q = dqn(env)
+
+                """
                 if epoch % 10 == 0 :
                     print(Q)
                     print('-----lr is {}-----'.format(lr))
                     print('-----epsilon is {}-----'.format(epsilon))
                     print('-----epoch is {}-----'.format(epoch))
+                """
 
                 Q_target = torch.max(target_dqn(env)[0])
                 target_list.append(Q_target)
@@ -379,6 +360,9 @@ if __name__ == "__main__":
                 action_list.append(action_number)
                 #action(action_number // 2, action_number % 2)
                 action(action_number, 0)
+
+            loss = train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn, lr)
+            loss_list.append(loss)
 
         time.sleep(0.2)
 
