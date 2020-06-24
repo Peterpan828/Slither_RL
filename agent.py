@@ -24,9 +24,10 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 
 from collections import namedtuple
+from argument import parser
 
-device = 'cuda'
-discount_factor = 0.9
+device = 'cuda:0'
+discount_factor = 0.98
 
 
 def open_and_size_browser_window(width, height, x_pos=0, y_pos=0, url='http://www.slither.io'):
@@ -102,7 +103,7 @@ def move_to_radians(radians, click, radius=100):
 
 def start_game(start_button_position_x, start_button_position_y):
 
-    time.sleep(1)
+    time.sleep(3)
     pyautogui.click(start_button_position_x, start_button_position_y)
     time.sleep(0.1)
     move_to_radians(0, 0)
@@ -117,7 +118,7 @@ def get_direction():
 def Reward(prev_length, cur_length):
     dif = cur_length - prev_length
 
-    return dif
+    return dif / 100
 
 
 def screenshot(x, y, w, h, gray, reduction_factor):
@@ -160,8 +161,8 @@ def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn
     batch_size = 128
     max_memory = 10000
 
-    if len(reward_list) < batch_size + 1:
-        return
+    if len(reward_list) < batch_size * 5:
+        return None
 
     if len(reward_list) > max_memory:
         env_list = env_list[-max_memory:]
@@ -173,41 +174,37 @@ def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn
     criterion = nn.MSELoss()
     optimizer = optim.Adam(dqn.parameters(), lr=lr)
     
-    #env = torch.stack(env_list[:len(reward_list)-1])
+    
     env = torch.stack(env_list)
-    #action_list = action_list[:len(reward_list)-1]
-    reward = torch.tensor(reward_list[1:], dtype=torch.float32).view(-1,1)
+    reward = torch.tensor(reward_list, dtype=torch.float32).view(-1,1)
     reward = reward.to(device)
     
-    Q_target = torch.stack(target_list[1:])
+    Q_target = torch.stack(target_list)
     Q_target = Q_target.view(-1, 1)
     
     label = reward + discount_factor * Q_target
     loss_total = 0.
 
-    print('-----Training start-----')
-    for i in range(10):
+    
+    indices = random.sample(range(len(label)), batch_size)
+    env_sample = env[indices]
+    label_sample = label[indices]
+    
+    action_list_sample = [action_list[j] for j in indices]
 
-        indices = random.sample(range(len(label)), batch_size)
-        env_sample = env[indices]
-        label_sample = label[indices]
-        
-        print(len(indices))
-        print(len(action_list))
-        action_list_sample = [action_list[j] for j in indices]
+    pred = dqn(env_sample)
+    pred = pred[torch.arange(pred.shape[0]), action_list_sample]
+    pred = pred.view(-1, 1)
 
-        pred = dqn(env_sample)
-        pred = pred[torch.arange(pred.shape[0]), action_list_sample]
-        pred = pred.view(-1, 1)
+    loss = criterion(pred, label_sample)
 
-        loss = criterion(pred, label_sample)
-        loss.backward()
+    optimizer.zero_grad()
+    loss.backward()
 
-        optimizer.step()
-        loss_total += loss
-    print('-----Training Finished-----')
-    print('loss is {}'.format(loss_total / 10))
-    return loss_total / 10
+    optimizer.step()
+    loss_total += loss.detach().item()
+    print('loss is {}'.format(loss_total))
+    return loss_total
 
     
 if __name__ == "__main__":
@@ -222,10 +219,11 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
 
     warnings.filterwarnings("ignore")
+    args = parser()
 
     device = 'cuda'
     dqn = DQN()
-    #dqn.load_state_dict(torch.load('Model'))
+    dqn.load_state_dict(torch.load('Model'))
     dqn = dqn.to(device)
     target_dqn = DQN()
     target_dqn.load_state_dict(dqn.state_dict())
@@ -260,27 +258,18 @@ if __name__ == "__main__":
     score = 10
     prev_score = 10
 
-    max_memory = 300
-    epsilon = 0.3
+    epsilon = 0.8
     epoch = 0
     count = 0
-    lr = 5e-4
+    lr = args.lr
     episode = 0
+    first = True
 
     while True:
         
-        if episode == 10:
+        if episode == args.episode:
             break
         
-        if episode % 5 == 0:
-            target_dqn.load_state_dict(dqn.state_dict())
-        
-        if epoch % 1000 == 999:
-            lr = lr * 0.95
-            epsilon = epsilon * 0.95
-            print('-----lr is {}-----'.format(lr))
-            print('-----epsilon is {}-----'.format(epsilon))
-
         
         score, dead = read_score(driver)
         
@@ -303,7 +292,7 @@ if __name__ == "__main__":
 
                 if len(env_list)!= 0:
                     
-                    reward_list.append(-50) # reward when died
+                    reward_list.append(-0.5) # reward when died
                     tensor_zero = torch.tensor(0).float().to(device)
                     tensor_zero = tensor_zero.to(device)
                     target_list.append(tensor_zero)
@@ -314,9 +303,17 @@ if __name__ == "__main__":
                 driver.close()
                 count = 0
                 episode += 1
-                driver = open_and_size_browser_window(width=width, height=height)
-                start_game(1306, 228) 
+
+                if episode % 10 == 9:
+                    target_dqn.load_state_dict(dqn.state_dict())
+                    lr = lr * 0.9
+                    epsilon = epsilon * 0.9
+                    print('-----lr is {}-----'.format(lr))
+                    print('-----epsilon is {}-----'.format(epsilon))
+
+                driver = open_and_size_browser_window(width=width, height=height) 
                 start_game(722, 600)
+                first=True
                 time.sleep(1)
                 
             except:
@@ -327,7 +324,10 @@ if __name__ == "__main__":
             count = 0
 
             reward = Reward(prev_score, score)
-            reward_list.append(reward)
+
+            if first == False:
+                reward_list.append(reward)
+
             prev_score = score
             #print('score is {}'.format(score))
 
@@ -341,16 +341,9 @@ if __name__ == "__main__":
             with torch.no_grad():
                 Q = dqn(env)
 
-                """
-                if epoch % 10 == 0 :
-                    print(Q)
-                    print('-----lr is {}-----'.format(lr))
-                    print('-----epsilon is {}-----'.format(epsilon))
-                    print('-----epoch is {}-----'.format(epoch))
-                """
-
-                Q_target = torch.max(target_dqn(env)[0])
-                target_list.append(Q_target)
+                if first == False:
+                    Q_target = torch.max(target_dqn(env)[0])
+                    target_list.append(Q_target)
 
                 if np.random.random() < epsilon:
                     #action_number = np.random.randint(0,16)
@@ -363,9 +356,13 @@ if __name__ == "__main__":
                 action(action_number, 0)
 
             loss = train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn, lr)
-            loss_list.append(loss)
+            if loss != None:
+                loss_list.append(loss)
+            first = False
+            if loss == None:
+                time.sleep(0.1)
 
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     driver.close()
     with open ('loss', 'wb') as f:

@@ -9,20 +9,18 @@ with open('score' , 'rb') as f:
     score = pickle.load(f)
 
 
-a = len(score) // 10
-score_avg = []
 
-for i in range(a):
-    b = 0
-    b += sum(score[i*10:i*10+10]) / 10
-    score_avg.append(b)
+loss_avg = list()
 
+for i in range(len(loss)//10):
+    sum(loss[0:10])
+    loss_avg.append(sum(loss[i*10:i*10+10])/10)
 
 plt.figure()
-plt.plot(loss)
+plt.plot(loss_avg)
 plt.show()
 
 
 plt.figure()
-plt.plot(score_avg)
+plt.plot(score)
 plt.show()
