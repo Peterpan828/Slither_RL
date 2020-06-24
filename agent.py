@@ -155,26 +155,43 @@ def read_score(driver):
 
     return score, dead
 
+class ReplayMemory(object):
 
-def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn, lr):
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, arg):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = arg
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+def train_model(env_memory, reward_memory, target_memory, action_memory, dqn, target_dqn, lr):
 
     batch_size = 128
-    max_memory = 10000
 
-    if len(reward_list) < batch_size * 5:
+    if len(reward_memory) < batch_size * 5:
         return None
-
-    if len(reward_list) > max_memory:
-        env_list = env_list[-max_memory:]
-        reward_list = reward_list[-max_memory:]
-        target_list = target_list[-max_memory:]
-        action_list = action_list[-max_memory:]
 
     dqn.train()
     criterion = nn.MSELoss()
     optimizer = optim.Adam(dqn.parameters(), lr=lr)
     
-    
+    indices = random.sample(range(len(env_memory)), batch_size)
+    env_list = env_memory[indices]
+    reward_list = reward_memory[indices]
+    target_list = target_memory[indices]
+    action_list = [action_memory[j] for j in indices]
+
     env = torch.stack(env_list)
     reward = torch.tensor(reward_list, dtype=torch.float32).view(-1,1)
     reward = reward.to(device)
@@ -185,18 +202,11 @@ def train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn
     label = reward + discount_factor * Q_target
     loss_total = 0.
 
-    
-    indices = random.sample(range(len(label)), batch_size)
-    env_sample = env[indices]
-    label_sample = label[indices]
-    
-    action_list_sample = [action_list[j] for j in indices]
-
-    pred = dqn(env_sample)
-    pred = pred[torch.arange(pred.shape[0]), action_list_sample]
+    pred = dqn(env)
+    pred = pred[torch.arange(pred.shape[0]), action_list]
     pred = pred.view(-1, 1)
 
-    loss = criterion(pred, label_sample)
+    loss = criterion(pred, label)
 
     optimizer.zero_grad()
     loss.backward()
@@ -232,14 +242,14 @@ if __name__ == "__main__":
     cur_length = 10
     prev_length = 10
     dead = False
-    action_list = []
-    Qvalue_list = []
-    env_list = []
-    label_list = []
-    loss_list = []
-    env_list = []
-    reward_list = []
-    target_list = []
+    
+    max_memory = 10000
+
+    env_memory = ReplayMemory(max_memory)
+    reward_memory = ReplayMemory(max_memory)
+    target_memory = ReplayMemory(max_memory)
+    action_memory = ReplayMemory(max_memory)
+
     loss_list = []
     final_score_list = []
 
@@ -290,12 +300,11 @@ if __name__ == "__main__":
                 final_score = int(driver.find_element_by_tag_name('b').text)
                 final_score_list.append(final_score)
 
-                if len(env_list)!= 0:
+                if len(env_memory)!= 0:
                     
-                    reward_list.append(-0.5) # reward when died
+                    reward_memory.push(-0.5) # reward when died
                     tensor_zero = torch.tensor(0).float().to(device)
-                    tensor_zero = tensor_zero.to(device)
-                    target_list.append(tensor_zero)
+                    target_memory.push(tensor_zero)
                     
                 print('-----episode is {}-----'.format(episode))
                 print("-----Epoch is {}-----".format(epoch))
@@ -326,7 +335,7 @@ if __name__ == "__main__":
             reward = Reward(prev_score, score)
 
             if first == False:
-                reward_list.append(reward)
+                reward_memory.push(reward)
 
             prev_score = score
             #print('score is {}'.format(score))
@@ -336,14 +345,14 @@ if __name__ == "__main__":
             env = np.asarray(env)
             env = env[np.newaxis,np.newaxis,:,:]
             env = torch.from_numpy(env).float().to(device)
-            env_list.append(env.view(1, 163, 313))
+            env_memory.push(env.view(1, 163, 313))
 
             with torch.no_grad():
                 Q = dqn(env)
 
                 if first == False:
                     Q_target = torch.max(target_dqn(env)[0])
-                    target_list.append(Q_target)
+                    target_memory.push(Q_target)
 
                 if np.random.random() < epsilon:
                     #action_number = np.random.randint(0,16)
@@ -351,11 +360,11 @@ if __name__ == "__main__":
                 else:    
                     action_number = torch.argmax(Q)
 
-                action_list.append(action_number)
+                action_memory.push(action_number)
                 #action(action_number // 2, action_number % 2)
                 action(action_number, 0)
 
-            loss = train_model(env_list, reward_list, target_list, action_list, dqn, target_dqn, lr)
+            loss = train_model(env_memory, reward_list, target_list, action_list, dqn, target_dqn, lr)
             if loss != None:
                 loss_list.append(loss)
             first = False
