@@ -164,13 +164,21 @@ class ReplayMemory(object):
 
     def push(self, arg):
         """Saves a transition."""
-        if len(self.memory) < self.capacity:
+        if len(self.memory) < self.capacity and self.position == len(self.memory):
             self.memory.append(None)
         self.memory[self.position] = arg
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
+
+    def delete(self):
+        
+        self.position = (self.position - 1) % self.capacity
+
+        del self.memory[self.position]
+
+        
 
     def __len__(self):
         return len(self.memory)
@@ -179,7 +187,10 @@ def train_model(env_memory, reward_memory, target_memory, action_memory, dqn, ta
 
     batch_size = 128
 
-    if len(reward_memory) < batch_size * 5:
+    if len(env_memory) != len(reward_memory):
+        sys.exit('Replay Memory error')
+
+    if len(reward_memory) < batch_size * 2:
         return None
 
     dqn.train()
@@ -187,10 +198,10 @@ def train_model(env_memory, reward_memory, target_memory, action_memory, dqn, ta
     optimizer = optim.Adam(dqn.parameters(), lr=lr)
     
     indices = random.sample(range(len(env_memory)), batch_size)
-    env_list = env_memory[indices]
-    reward_list = reward_memory[indices]
-    target_list = target_memory[indices]
-    action_list = [action_memory[j] for j in indices]
+    env_list = [env_memory.memory[i] for i in indices]
+    reward_list = [reward_memory.memory[i] for i in indices]
+    target_list = [target_memory.memory[i] for i in indices]
+    action_list = [action_memory.memory[i] for i in indices]
 
     env = torch.stack(env_list)
     reward = torch.tensor(reward_list, dtype=torch.float32).view(-1,1)
@@ -233,7 +244,7 @@ if __name__ == "__main__":
 
     device = 'cuda'
     dqn = DQN()
-    dqn.load_state_dict(torch.load('Model'))
+    #dqn.load_state_dict(torch.load('Model'))
     dqn = dqn.to(device)
     target_dqn = DQN()
     target_dqn.load_state_dict(dqn.state_dict())
@@ -293,7 +304,7 @@ if __name__ == "__main__":
 
 
         if dead == True:
-            
+
             count += 1
             try:
                 
@@ -302,6 +313,12 @@ if __name__ == "__main__":
 
                 if len(env_memory)!= 0:
                     
+                    # for delay
+                    env_memory.delete()
+                    reward_memory.delete()
+                    action_memory.delete()
+                    target_memory.delete()
+
                     reward_memory.push(-0.5) # reward when died
                     tensor_zero = torch.tensor(0).float().to(device)
                     target_memory.push(tensor_zero)
@@ -345,8 +362,7 @@ if __name__ == "__main__":
             env = np.asarray(env)
             env = env[np.newaxis,np.newaxis,:,:]
             env = torch.from_numpy(env).float().to(device)
-            env_memory.push(env.view(1, 163, 313))
-
+            
             with torch.no_grad():
                 Q = dqn(env)
 
@@ -364,14 +380,15 @@ if __name__ == "__main__":
                 #action(action_number // 2, action_number % 2)
                 action(action_number, 0)
 
-            loss = train_model(env_memory, reward_list, target_list, action_list, dqn, target_dqn, lr)
+            loss = train_model(env_memory, reward_memory, target_memory, action_memory, dqn, target_dqn, lr)
+            env_memory.push(env.view(1, 163, 313))  # for same length
+
             if loss != None:
                 loss_list.append(loss)
+                
             first = False
-            if loss == None:
-                time.sleep(0.1)
-
-        time.sleep(0.1)
+            
+        time.sleep(0.4)
 
     driver.close()
     with open ('loss', 'wb') as f:

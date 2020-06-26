@@ -13,8 +13,9 @@ with open('score' , 'rb') as f:
 loss_avg = list()
 
 for i in range(len(loss)//10):
-    sum(loss[0:10])
-    loss_avg.append(sum(loss[i*10:i*10+10])/10)
+    a = sum(loss[i*10:i*10+10])/10
+    if a <= 100:
+        loss_avg.append(1/(sum(loss[i*10:i*10+10])/10))
 
 plt.figure()
 plt.plot(loss_avg)
