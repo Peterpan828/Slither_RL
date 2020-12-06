@@ -3,31 +3,44 @@ import pyautogui
 import imutils
 import cv2
 import sys
+import traceback
+import logging
 import time
 import random
 import math
-import pytesseract
+
 
 import mss
 import mss.tools
 from PIL import Image
-import PIL.ImageOps
-import re
 import os
 from selenium import webdriver
-from Xlib import display, X
+#from Xlib import display, X
+from cv2 import resize
 
 import torch
+import math
+
+import mss
+import mss.tools
+from PIL import Image
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torchvision.transforms as T
+import torch.multiprocessing as mulp
+from torch.distributions.categorical import Categorical
+#from setproctitle import setproctitle as ptitle
 
-from collections import namedtuple
+from collections import deque
 from argument import parser
+from optimizer import SharedAdam
 
-device = 'cuda:0'
-discount_factor = 0.98
+import matplotlib.pyplot as plt
+import pickle
+
+device = 'cpu'
+gamma = 0.95
 
 
 def open_and_size_browser_window(width, height, x_pos=0, y_pos=0, url='http://www.slither.io'):
@@ -35,6 +48,9 @@ def open_and_size_browser_window(width, height, x_pos=0, y_pos=0, url='http://ww
     # opens the browser window
     chrome_options = webdriver.ChromeOptions()
     chrome_options.add_argument("--disable-infobars")
+    chrome_options.add_argument("--disable-device-discovery-notifications")
+    chrome_options.add_argument("--disable-default-apps")
+    chrome_options.add_argument("--disable-notifications")
     driver = webdriver.Chrome("./chromedriver", chrome_options=chrome_options)
     driver.set_window_size(width, height)
 
@@ -44,41 +60,56 @@ def open_and_size_browser_window(width, height, x_pos=0, y_pos=0, url='http://ww
     return driver
 
 
-class Flatten(nn.Module):
-    def forward(self, x):
-        x = x.view(x.size()[0], -1)
-        return x
 
-
-class DQN(nn.Module):
+class Actor_Critic(nn.Module):
 
     def __init__(self):
-        super(DQN, self).__init__()
-        self.conv1 = nn.Conv2d(1, 6, kernel_size=5, stride=2)
-        self.bn1 = nn.BatchNorm2d(6)
-        self.conv2 = nn.Conv2d(6, 10, kernel_size=5, stride=2)
-        self.bn2 = nn.BatchNorm2d(10)
-        self.conv3 = nn.Conv2d(10, 16, kernel_size=5, stride=2)
-        self.bn3 = nn.BatchNorm2d(16)
-        self.conv4 = nn.Conv2d(16, 32, kernel_size=5, stride=2)
-        self.bn4 = nn.BatchNorm2d(32)
-        self.flatten = Flatten()
-        self.dense1 = nn.Linear(3584, 1024)
-        self.dense2 = nn.Linear(1024, 256)
-        self.dense3 = nn.Linear(256, 8)
+        super(Actor_Critic, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, 5, stride=1, padding=2)
+        self.maxp1 = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(32, 32, 5, stride=1, padding=1)
+        self.maxp2 = nn.MaxPool2d(2, 2)
+        self.conv3 = nn.Conv2d(32, 64, 4, stride=1, padding=1)
+        self.maxp3 = nn.MaxPool2d(2, 2)
+        self.conv4 = nn.Conv2d(64, 64, 3, stride=1, padding=1)
+        self.maxp4 = nn.MaxPool2d(2, 2)
 
-    def forward(self, x):
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = F.relu(self.bn4(self.conv4(x)))
-        x = self.flatten(x)
+        self.lstm = nn.LSTMCell(1024, 512)
+        self.fc_critic = nn.Linear(512, 1)
+        self.fc_actor = nn.Linear(512, 16)
 
-        x = F.relu(self.dense1(x))
-        x = F.relu(self.dense2(x))
-        x = self.dense3(x)
+    def forward(self, inputs):
+        x, (hx, cx) = inputs
+        x = F.relu(self.maxp1(self.conv1(x)))
+        x = F.relu(self.maxp2(self.conv2(x)))
+        x = F.relu(self.maxp3(self.conv3(x)))
+        x = F.relu(self.maxp4(self.conv4(x)))
+        x = x.view(x.size(0), -1)
 
-        return x
+        hx, cx = self.lstm(x, (hx, cx))
+
+        prob = F.softmax(self.fc_actor(hx), dim=1)
+        value = self.fc_critic(hx)
+
+        return prob, value, (hx, cx)
+
+def weights_init_bias(m):
+
+    classname = m.__class__.__name__
+   
+    if classname.find('Linear') != -1:
+        m.weight.data.uniform_(0.0, 1.0)
+        m.bias.data.fill_(0)
+
+
+def preprocess(state):
+    img = state.mean(2)
+    img = img.astype(np.float32)
+    img = (img - img.mean()) / (img.std())
+    img = resize(img, (80, 80))
+    img = np.reshape(img, [1, 80, 80])
+    img = torch.from_numpy(img).unsqueeze(0)
+    return img
 
 
 def action(number, click):
@@ -86,24 +117,32 @@ def action(number, click):
     move_to_radians(radian, click=click)
 
 
-def move_to_radians(radians, click, radius=100):
 
+def move_to_radians(radians, click, radius = 100):
+    
     if click == 0:
-        pyautogui.moveTo(728 + radius * math.cos(radians),
-                         492 + radius * math.sin(radians))
-    else:
-        pyautogui.mouseDown(728 + radius * math.cos(radians),
-                            492 + radius * math.sin(radians))
-        time.sleep(0.1)
-        pyautogui.mouseUp(728 + radius * math.cos(radians),
-                          492 + radius * math.sin(radians))
+        #pyautogui.moveTo(728 + radius * math.cos(radians)
+        #        , 492 + radius * math.sin(radians))
+        pyautogui.moveTo(935 + radius * math.cos(radians)
+                , 581 + radius * math.sin(radians))
 
+    else:
+        #pyautogui.mouseDown(728 + radius * math.cos(radians)
+        #        , 492 + radius * math.sin(radians))
+        pyautogui.mouseDown(935 + radius * math.cos(radians)
+                , 581 + radius * math.sin(radians))
+        time.sleep(0.1)
+        #pyautogui.mouseUp(728 + radius * math.cos(radians)
+        #        , 492 + radius * math.sin(radians))
+        pyautogui.mouseUp(935 + radius * math.cos(radians)
+                , 581 + radius * math.sin(radians))
+    
     return radians
 
 
 def start_game(start_button_position_x, start_button_position_y):
 
-    time.sleep(3)
+    time.sleep(1)
     pyautogui.click(start_button_position_x, start_button_position_y)
     time.sleep(0.1)
     move_to_radians(0, 0)
@@ -116,28 +155,28 @@ def get_direction():
 
 
 def Reward(prev_length, cur_length):
-    dif = cur_length - prev_length
+    dif = cur_length - prev_length  
+    return dif
 
-    return dif / 100
 
-
-def screenshot(x, y, w, h, gray, reduction_factor):
+def screenshot(x, y, w, h):
     with mss.mss() as sct:
         # The screen part to capture
         region = {'left': x, 'top': y, 'width': w, 'height': h}
 
         # Grab the data
         img = sct.grab(region)
+        img = cv2.cvtColor(np.array(img), cv2.COLOR_BGRA2BGR)
 
-        if gray:
-            result = cv2.cvtColor(np.array(img), cv2.COLOR_BGRA2GRAY)
-        else:
-            result = cv2.cvtColor(np.array(img), cv2.COLOR_BGRA2BGR)
-
-        img = result[::reduction_factor, ::reduction_factor]
-        img = Image.fromarray(img)
-        # img.show()
         return img
+
+def plot_screen(img):
+
+    # for test
+    
+    plt.figure()
+    plt.imshow(img.squeeze(0).squeeze(0))
+    plt.show()
 
 
 def read_score(driver):
@@ -155,246 +194,289 @@ def read_score(driver):
 
     return score, dead
 
-class ReplayMemory(object):
 
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
 
-    def push(self, arg):
-        """Saves a transition."""
-        if len(self.memory) < self.capacity and self.position == len(self.memory):
-            self.memory.append(None)
-        self.memory[self.position] = arg
-        self.position = (self.position + 1) % self.capacity
+def train(args, global_model, optimizer, score_list):
 
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
+    gpu_id = 0
+    torch.manual_seed(100)
 
-    def delete(self):
-        
-        self.position = (self.position - 1) % self.capacity
+    local_model = Actor_Critic()
 
-        del self.memory[self.position]
+    hx = torch.zeros(1, 512)
+    cx = torch.zeros(1, 512)
 
-        
-
-    def __len__(self):
-        return len(self.memory)
-
-def train_model(env_memory, reward_memory, target_memory, action_memory, dqn, target_dqn, lr):
-
-    batch_size = 128
-
-    if len(env_memory) != len(reward_memory):
-        sys.exit('Replay Memory error')
-
-    if len(reward_memory) < batch_size * 2:
-        return None
-
-    dqn.train()
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(dqn.parameters(), lr=lr)
-    
-    indices = random.sample(range(len(env_memory)), batch_size)
-    env_list = [env_memory.memory[i] for i in indices]
-    reward_list = [reward_memory.memory[i] for i in indices]
-    target_list = [target_memory.memory[i] for i in indices]
-    action_list = [action_memory.memory[i] for i in indices]
-
-    env = torch.stack(env_list)
-    reward = torch.tensor(reward_list, dtype=torch.float32).view(-1,1)
-    reward = reward.to(device)
-    
-    Q_target = torch.stack(target_list)
-    Q_target = Q_target.view(-1, 1)
-    
-    label = reward + discount_factor * Q_target
-    loss_total = 0.
-
-    pred = dqn(env)
-    pred = pred[torch.arange(pred.shape[0]), action_list]
-    pred = pred.view(-1, 1)
-
-    loss = criterion(pred, label)
-
-    optimizer.zero_grad()
-    loss.backward()
-
-    optimizer.step()
-    loss_total += loss.detach().item()
-    print('loss is {}'.format(loss_total))
-    return loss_total
-
-    
-if __name__ == "__main__":
-
-    import time
-    import pickle
-    import numpy
-    from numpy import asarray
-    import torch.optim as optim
-    import warnings
-    import torch
-    import matplotlib.pyplot as plt
-
-    warnings.filterwarnings("ignore")
-    args = parser()
-
-    device = 'cuda'
-    dqn = DQN()
-    #dqn.load_state_dict(torch.load('Model'))
-    dqn = dqn.to(device)
-    target_dqn = DQN()
-    target_dqn.load_state_dict(dqn.state_dict())
-    target_dqn.eval()
-    target_dqn.to(device)
-    cur_length = 10
-    prev_length = 10
-    dead = False
-    
-    max_memory = 10000
-
-    env_memory = ReplayMemory(max_memory)
-    reward_memory = ReplayMemory(max_memory)
-    target_memory = ReplayMemory(max_memory)
-    action_memory = ReplayMemory(max_memory)
-
-    loss_list = []
-    final_score_list = []
-
-    n = 0
-
-    width = 1300
-    height = 800
+    width = 1250
+    height = 650
     driver = open_and_size_browser_window(width=width, height=height)
 
-    start_game(1306, 228) 
-    start_game(722, 600)
+    #start_game(1306, 228)
+    #start_game(722, 600)
+    start_game(973, 784)
     time.sleep(1)
-
-    final_score = 0
     
     score = 10
     prev_score = 10
-
-    epsilon = 0.8
-    epoch = 0
+    
+    #epsilon = 0.5
     count = 0
-    lr = args.lr
-    episode = 0
-    first = True
+    debug = 0
+    
+    start_time = time.time()
+    local_model.eval()
+
+    final_score_list = score_list
 
     while True:
-        
-        if episode == args.episode:
+
+        if time.time() > start_time + args.time * 3600:
             break
+
+
+        local_model.load_state_dict(global_model.state_dict())
+        hx = torch.zeros(1, 512)
+        cx = torch.zeros(1, 512)
+
+        entropies = []
+        values = []
+        log_probs = []
+        rewards = []
+        is_dead = -1
         
-        
-        score, dead = read_score(driver)
-        
-        if count >= 20:
-            driver.close()
-            count = 0
-            driver = open_and_size_browser_window(width=width, height=height)
-            start_game(1306, 228) 
-            start_game(722, 600)
-            time.sleep(1)
+        for step in range(args.step_episode):
 
+            if is_dead != -1:
+                break
 
-        if dead == True:
+            state = screenshot(20,200,1700,760)
+            state = preprocess(state)
+            
+            #plot_screen(state)
 
-            count += 1
-            try:
-                
-                final_score = int(driver.find_element_by_tag_name('b').text)
-                final_score_list.append(final_score)
+            prob, value, (hx, cx) = local_model((state, (hx, cx)))
 
-                if len(env_memory)!= 0:
-                    
-                    # for delay
-                    env_memory.delete()
-                    reward_memory.delete()
-                    action_memory.delete()
-                    target_memory.delete()
+            log_prob = torch.log(prob)
+            entropy = -(log_prob * prob).sum(1)
 
-                    reward_memory.push(-0.5) # reward when died
-                    tensor_zero = torch.tensor(0).float().to(device)
-                    target_memory.push(tensor_zero)
-                    
-                print('-----episode is {}-----'.format(episode))
-                print("-----Epoch is {}-----".format(epoch))
-                print('Final score is {}'.format(final_score))
-                driver.close()
+            m = Categorical(prob)
+            action_n = m.sample().detach()
+            log_prob = log_prob.gather(1, action_n.unsqueeze(0))
+
+            action(action_n.cpu() // 2, action_n.cpu() % 2)
+
+            score, dead = read_score(driver)
+
+            if dead == True:
+                reward = 0
+                count += 1
+
+            else:
                 count = 0
-                episode += 1
-
-                if episode % 10 == 9:
-                    target_dqn.load_state_dict(dqn.state_dict())
-                    lr = lr * 0.9
-                    epsilon = epsilon * 0.9
-                    print('-----lr is {}-----'.format(lr))
-                    print('-----epsilon is {}-----'.format(epsilon))
-
-                driver = open_and_size_browser_window(width=width, height=height) 
-                start_game(722, 600)
-                first=True
-                time.sleep(1)
-                
-            except:
-                time.sleep(0.1)
-
-        else:
-            epoch += 1
-            count = 0
 
             reward = Reward(prev_score, score)
-
-            if first == False:
-                reward_memory.push(reward)
-
+            reward = max(min(reward, 3), -3)
             prev_score = score
-            #print('score is {}'.format(score))
 
+            entropies.append(entropy)
+            values.append(value)
+            log_probs.append(log_prob)
+            rewards.append(reward)
 
-            env = screenshot(80,170,1250,650,1,4)
-            env = np.asarray(env)
-            env = env[np.newaxis,np.newaxis,:,:]
-            env = torch.from_numpy(env).float().to(device)
+            if count >= 20:
+                is_dead = 1 
+                break
+
+            is_dead = driver.execute_script("return dead_mtm")
             
-            with torch.no_grad():
-                Q = dqn(env)
+            if reward == 0:
+                debug += 1
+            else:
+                debug = 0
 
-                if first == False:
-                    Q_target = torch.max(target_dqn(env)[0])
-                    target_memory.push(Q_target)
+            # For Penalty
+            if debug == 25:
+                print('Penalty!')
+                time.sleep(2)
+                is_dead = 1
+                break
+        
+        if count < 20:
+            
+            print('Trainig Start')
+            
+            R = torch.zeros(1, 1)
+            gae = torch.zeros(1, 1)
 
-                if np.random.random() < epsilon:
-                    #action_number = np.random.randint(0,16)
-                    action_number = np.random.randint(0, 8)
-                else:    
-                    action_number = torch.argmax(Q)
+            if is_dead == -1:
+                state = screenshot(20,200,1700,760)
+                state = preprocess(state)
 
-                action_memory.push(action_number)
-                #action(action_number // 2, action_number % 2)
-                action(action_number, 0)
+                _, value, _ = local_model((state, (hx, cx)))
+                R = value.detach()
 
-            loss = train_model(env_memory, reward_memory, target_memory, action_memory, dqn, target_dqn, lr)
-            env_memory.push(env.view(1, 163, 313))  # for same length
+            values.append(R)
+            policy_loss = 0
+            critic_loss = 0
 
-            if loss != None:
-                loss_list.append(loss)
+            for i in reversed(range(len(rewards))):
+                R = gamma * R + rewards[i]
+                A = R - values[i]
+                critic_loss = critic_loss + 0.5 * A.pow(2)
+
+                delta = rewards[i] + gamma * values[i + 1].detach() - values[i].detach()
+                gae = gae * gamma + delta
+
+                policy_loss = policy_loss - \
+                    log_probs[i] * gae - 0.01 * entropies[i]
+
+            local_model.zero_grad()
+
+            total_loss = policy_loss + 0.5 * critic_loss
+            total_loss.backward()
+
+            for param, global_param in zip(local_model.parameters(), global_model.parameters()):
+                global_param._grad = param.grad.cpu()
                 
-            first = False
+            optimizer.step()
+            print('Trainig Finished')
+
+        entropies.clear()
+        values.clear()
+        log_probs.clear()
+        rewards.clear()
+
+        if is_dead != -1:
+
+            time.sleep(3)
+            try:
+                final_score = int(driver.find_element_by_tag_name('b').text)
+            except:
+                final_score = 10
+
+            final_score_list.append(final_score)
             
-        time.sleep(0.4)
+            driver.close()
+            
+            count = 0
+            debug = 0
+            driver = open_and_size_browser_window(width=width, height=height)
+            #start_game(1306, 228)
+            #start_game(722, 600)
+            start_game(973, 784) 
+            prev_score = 10
+            time.sleep(1)
+    
+    return final_score_list
+      
+                
+def test(args, global_model, test_score):
 
-    driver.close()
-    with open ('loss', 'wb') as f:
-        pickle.dump(loss_list, f)
+    #gpu_id = 0
+    local_model = Actor_Critic()
 
-    with open('score', 'wb') as f:
-        pickle.dump(final_score_list, f)
+    for i in range(args.test):
 
-    torch.save(dqn.state_dict(), 'Model')
+        final_score = 0
+
+        
+        hx = torch.zeros(1, 512)
+        cx = torch.zeros(1, 512)
+
+        width = 1250
+        height = 650
+        driver = open_and_size_browser_window(width=width, height=height)
+
+        #start_game(1306, 228)
+        start_game(973, 784) 
+        time.sleep(1)
+
+        local_model.eval()
+
+        local_model.load_state_dict(global_model.state_dict())
+        hx = torch.zeros(1, 512)
+        cx = torch.zeros(1, 512)
+
+        is_dead = -1
+        
+        while is_dead == -1:
+
+            state = screenshot(20,200,1700,760)
+            state = preprocess(state).cuda()
+            
+            #plot_screen(state)
+
+            with torch.no_grad():
+
+                prob, _, (hx, cx) = local_model((state, (hx, cx)))
+
+            action_n = prob.max(1)[1].data.cpu().numpy()
+
+
+            if args.random == 0:
+                action(action_n[0] //2 , action_n[0] % 2)
+            
+            else:
+                action_n = random.randint(0, 15)
+                action(action_n // 2, action_n % 2)
+
+
+            is_dead = driver.execute_script("return dead_mtm")
+        
+
+        time.sleep(3)
+        final_score = int(driver.find_element_by_tag_name('b').text)
+
+        if args.random == 0:
+            test_score['policy'].append(final_score - 10)
+        
+        else:
+            test_score['random'].append(final_score - 10)
+
+        driver.close()
+    
+    return test_score
+
+                
+
+
+
+if __name__ == "__main__":
+
+    import os
+    import time
+    import warnings
+
+    warnings.filterwarnings("ignore")
+
+    args = parser()
+    mulp.set_start_method('spawn')
+
+    global_model = Actor_Critic()
+    global_model.apply(weights_init_bias)
+    
+    score = []
+    test_score = []
+
+    #with open('test_score', 'rb') as f:
+    #    test_score = pickle.load(f)
+
+    with open('final_score', 'rb') as f:
+        score = pickle.load(f)
+        
+    if args.test != 0:
+        global_model.load_state_dict(torch.load('model_slither'))
+        global_model.eval()
+        test_score = test(args,global_model, test_score)
+        with open('test_score', 'wb') as f:
+            pickle.dump(test_score, f)
+            
+    else:
+        global_model.load_state_dict(torch.load('model_slither'))
+        global_model.train()
+        optimizer = SharedAdam(global_model.parameters(), lr=args.lr)
+        final_score_list = train(args, global_model, optimizer, score)
+        torch.save(global_model.state_dict(), 'model_slither')
+
+        with open('final_score', 'wb') as f:
+            pickle.dump(final_score_list, f)
+        

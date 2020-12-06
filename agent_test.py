@@ -15,7 +15,7 @@ import PIL.ImageOps
 import re
 import os
 from selenium import webdriver
-from Xlib import display, X
+#from Xlib import display, X
 from collections import namedtuple
 
 import torch
@@ -23,7 +23,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torchvision.transforms as T
-
+import matplotlib.pyplot as plt
 
 
 def open_and_size_browser_window(width, height, x_pos=0, y_pos=0, url='http://www.slither.io'):
@@ -86,14 +86,21 @@ def action(number, click):
 def move_to_radians(radians, click, radius = 100):
     
     if click == 0:
-        pyautogui.moveTo(728 + radius * math.cos(radians)
-                , 492 + radius * math.sin(radians))
+        #pyautogui.moveTo(728 + radius * math.cos(radians)
+        #        , 492 + radius * math.sin(radians))
+        pyautogui.moveTo(935 + radius * math.cos(radians)
+                , 581 + radius * math.sin(radians))
+
     else:
-        pyautogui.mouseDown(728 + radius * math.cos(radians)
-                , 492 + radius * math.sin(radians))
+        #pyautogui.mouseDown(728 + radius * math.cos(radians)
+        #        , 492 + radius * math.sin(radians))
+        pyautogui.mouseDown(935 + radius * math.cos(radians)
+                , 581 + radius * math.sin(radians))
         time.sleep(0.1)
-        pyautogui.mouseUp(728 + radius * math.cos(radians)
-                , 492 + radius * math.sin(radians))
+        #pyautogui.mouseUp(728 + radius * math.cos(radians)
+        #        , 492 + radius * math.sin(radians))
+        pyautogui.mouseUp(935 + radius * math.cos(radians)
+                , 581 + radius * math.sin(radians))
     
     return radians
 
@@ -164,9 +171,10 @@ if __name__ == "__main__":
     import torch
     warnings.filterwarnings("ignore")
     
-    device = 'cuda'
+    #device = 'cuda'
+    device = 'cpu'
     dqn = DQN()
-    dqn.load_state_dict(torch.load('Model'))
+    dqn.load_state_dict(torch.load('Model', map_location=torch.device('cpu')))
     dqn = dqn.to(device)
     dqn.eval()
     cur_length = 10
@@ -181,19 +189,32 @@ if __name__ == "__main__":
 
     n = 0
 
-    width = 1300
-    height = 800
+    width = 1250
+    height = 650
     driver = open_and_size_browser_window(width = width, height = height)
 
-    start_game(722, 600)   
+    #while True:
+    #    print(pyautogui.position())
+    #    time.sleep(2)
+
+    #start_game(722, 600)
+    start_game(973, 784)   
     time.sleep(3)
     
     
     while True:
         
+        time.sleep(3)
         # Get env
-        env = screenshot(80,170,1250,650,1,4)
+        env = screenshot(20,200,1700,760,1,4)
         env = asarray(env)
+
+        plt.figure()
+        print(env.shape)
+        plt.imshow(env)
+        plt.show()
+        time.sleep(2000)
+
         env = env[numpy.newaxis,numpy.newaxis,:,:]
         env = torch.from_numpy(env)
         env = env.type(torch.float32)
