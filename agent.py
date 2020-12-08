@@ -125,13 +125,14 @@ def move_to_radians(radians, click, radius = 100):
         #        , 492 + radius * math.sin(radians))
         pyautogui.moveTo(935 + radius * math.cos(radians)
                 , 581 + radius * math.sin(radians))
+        time.sleep(0.2)
 
     else:
         #pyautogui.mouseDown(728 + radius * math.cos(radians)
         #        , 492 + radius * math.sin(radians))
         pyautogui.mouseDown(935 + radius * math.cos(radians)
                 , 581 + radius * math.sin(radians))
-        time.sleep(0.1)
+        time.sleep(0.2)
         #pyautogui.mouseUp(728 + radius * math.cos(radians)
         #        , 492 + radius * math.sin(radians))
         pyautogui.mouseUp(935 + radius * math.cos(radians)
@@ -223,6 +224,7 @@ def train(args, global_model, optimizer, score_list):
     debug = 0
     
     start_time = time.time()
+    record_time = start_time
     local_model.eval()
 
     final_score_list = score_list
@@ -232,6 +234,14 @@ def train(args, global_model, optimizer, score_list):
         if time.time() > start_time + args.time * 3600:
             break
 
+        if time.time() > record_time + 0.5 * 3600:
+            print("-----Save-----!!")
+            record_time = time.time()
+            torch.save(global_model.state_dict(), 'model_slither')
+
+            with open('final_score', 'wb') as f:
+                pickle.dump(final_score_list, f)
+            continue
 
         local_model.load_state_dict(global_model.state_dict())
         hx = torch.zeros(1, 512)

@@ -5,6 +5,13 @@ from statistics import median
 with open('final_score', 'rb') as f:
     score = pickle.load(f)
 
+with open('supervised_loss', 'rb') as f:
+    loss = pickle.load(f)
+
+plt.figure()
+plt.plot(loss)
+plt.show()
+
 """
 with open('test_score', 'rb') as f:
     test_score = pickle.load(f)
@@ -23,9 +30,9 @@ plt.savefig('save/test', dpi=300)
 plt.show()
 """
 
-plt.figure()
-plt.plot(score)
-plt.show()
+#plt.figure()
+#plt.plot(score)
+#plt.show()
 
 score_avg_100 = list()
 

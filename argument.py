@@ -16,7 +16,7 @@ def parser():
                         help='GPUs to use [-1 CPU only] (default: -1)')
     parser.add_argument('--max_episode_length', type=int, default=10000,
                         help='max length of a episode')
-    parser.add_argument('--time', type=float, default=0.1,
+    parser.add_argument('--time', type=float, default=0.5,
                         help='training time')
     parser.add_argument('--max_branch', type=int, default=10,
                         help='max # of branch')
