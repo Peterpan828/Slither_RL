@@ -1,6 +1,6 @@
 import pickle
 import matplotlib.pyplot as plt
-from statistics import median
+from statistics import median, mean
 
 with open('final_score', 'rb') as f:
     score = pickle.load(f)
@@ -14,6 +14,7 @@ with open('supervised_loss', 'rb') as f:
 plt.figure()
 plt.title('Supervised Loss')
 plt.plot(loss)
+plt.savefig('save/supervised', dpi=300)
 plt.show()
 
 
@@ -22,8 +23,8 @@ with open('test_score', 'rb') as f:
 
 # test_score['policy'] = test_score['policy'][:10]
 
-print(median(test_score['policy']))
-print(median(test_score['random']))
+print(mean(test_score['policy']))
+print(mean(test_score['random']))
 
 plt.figure()
 plt.title('Final Score')

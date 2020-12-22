@@ -491,6 +491,7 @@ def test(args, global_model, test_score):
 
                 prob, _, (hx, cx) = local_model((state, (hx, cx)))
 
+            print(prob)
             action_n = prob.max(1)[1].data.cpu().numpy()
 
 
@@ -549,9 +550,9 @@ if __name__ == "__main__":
         #    pickle.dump(test_score, f)
             
     else:
-        global_model.load_state_dict(torch.load('model_slither_segmentation'))
+        global_model.load_state_dict(torch.load('model_slither_supervised'))
         global_model.train()
-        optimizer = SharedAdam(global_model.parameters(), lr=1e-4)
+        optimizer = SharedAdam(global_model.parameters(), lr=1e-3)
         final_score_list = train(args, global_model, optimizer, score)
         torch.save(global_model.state_dict(), 'model_slither_supervised')
 
