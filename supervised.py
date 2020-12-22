@@ -396,7 +396,6 @@ def train(args, global_model, optimizer, score_list):
             #print(torch.cat(outputs, dim=0).shape)
             #print(torch.tensor(labels).shape)
             supervised_loss = NLLLoss(torch.cat(outputs, dim=0), torch.tensor(labels))
-            #print("Supervised Loss : ", supervised_loss)
             losses.append(supervised_loss.detach()) 
 
             for i in reversed(range(len(rewards))):
@@ -413,7 +412,7 @@ def train(args, global_model, optimizer, score_list):
             local_model.zero_grad()
 
             #total_loss = policy_loss + 0.5 * critic_loss
-            total_loss = 0.5 * critic_loss + supervised_loss
+            total_loss = 0.1 * critic_loss + supervised_loss
             total_loss.backward()
 
             for param, global_param in zip(local_model.parameters(), global_model.parameters()):
@@ -550,9 +549,9 @@ if __name__ == "__main__":
         #    pickle.dump(test_score, f)
             
     else:
-        global_model.load_state_dict(torch.load('model_slither_supervised'))
+        global_model.load_state_dict(torch.load('model_slither_segmentation'))
         global_model.train()
-        optimizer = SharedAdam(global_model.parameters(), lr=1e-3)
+        optimizer = SharedAdam(global_model.parameters(), lr=1e-4)
         final_score_list = train(args, global_model, optimizer, score)
         torch.save(global_model.state_dict(), 'model_slither_supervised')
 
