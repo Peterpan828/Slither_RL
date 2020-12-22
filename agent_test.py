@@ -174,7 +174,7 @@ if __name__ == "__main__":
     #device = 'cuda'
     device = 'cpu'
     dqn = DQN()
-    dqn.load_state_dict(torch.load('Model', map_location=torch.device('cpu')))
+    dqn.load_state_dict(torch.load('model_slither_supervised', map_location=torch.device('cpu')))
     dqn = dqn.to(device)
     dqn.eval()
     cur_length = 10

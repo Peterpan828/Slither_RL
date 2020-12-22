@@ -109,6 +109,13 @@ def preprocess(state):
     img = resize(img, (80, 80))
     img = np.reshape(img, [1, 80, 80])
     img = torch.from_numpy(img).unsqueeze(0)
+
+    # print('-------------')
+    # print(torch.mean(img))
+    # print(torch.max(img))
+    # print(torch.min(img))
+    # print('-------------')
+    time.sleep(5)
     return img
 
 
@@ -234,7 +241,7 @@ def train(args, global_model, optimizer, score_list):
         if time.time() > start_time + args.time * 3600:
             break
 
-        if time.time() > record_time + 0.5 * 3600:
+        if time.time() > record_time + 0.3 * 3600:
             print("-----Save-----!!")
             record_time = time.time()
             torch.save(global_model.state_dict(), 'model_slither')
@@ -411,7 +418,8 @@ def test(args, global_model, test_score):
         while is_dead == -1:
 
             state = screenshot(20,200,1700,760)
-            state = preprocess(state).cuda()
+            #state = preprocess(state).cuda()
+            state = preprocess(state)
             
             #plot_screen(state)
 
@@ -465,7 +473,9 @@ if __name__ == "__main__":
     global_model.apply(weights_init_bias)
     
     score = []
-    test_score = []
+    test_score = dict()
+    test_score['policy'] = []
+    test_score['random'] = []
 
     #with open('test_score', 'rb') as f:
     #    test_score = pickle.load(f)
@@ -474,7 +484,7 @@ if __name__ == "__main__":
         score = pickle.load(f)
         
     if args.test != 0:
-        global_model.load_state_dict(torch.load('model_slither'))
+        global_model.load_state_dict(torch.load('model_slither_supervised'))
         global_model.eval()
         test_score = test(args,global_model, test_score)
         with open('test_score', 'wb') as f:

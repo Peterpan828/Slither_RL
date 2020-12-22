@@ -38,10 +38,13 @@ from optimizer import SharedAdam
 
 import matplotlib.pyplot as plt
 import pickle
+from segmentation import UNET
 
 device = 'cpu'
 gamma = 0.95
 
+unet = UNET(1, 3)
+unet.load_state_dict(torch.load('./FCN/saved_models/first.pt', map_location = 'cpu'))
 
 def open_and_size_browser_window(width, height, x_pos=0, y_pos=0, url='http://www.slither.io'):
 
@@ -65,7 +68,7 @@ class Actor_Critic(nn.Module):
 
     def __init__(self):
         super(Actor_Critic, self).__init__()
-        self.conv1 = nn.Conv2d(1, 32, 5, stride=1, padding=2)
+        self.conv1 = nn.Conv2d(2, 32, 5, stride=1, padding=2)
         self.maxp1 = nn.MaxPool2d(2, 2)
         self.conv2 = nn.Conv2d(32, 32, 5, stride=1, padding=1)
         self.maxp2 = nn.MaxPool2d(2, 2)
@@ -109,7 +112,27 @@ def preprocess(state):
     img = resize(img, (80, 80))
     img = np.reshape(img, [1, 80, 80])
     img = torch.from_numpy(img).unsqueeze(0)
-    return img
+
+    with torch.no_grad():
+        result = unet(img)
+
+    result = result.squeeze(0)
+    conv_result = torch.zeros((80,80))
+
+    for i in range (0,80):
+        for j in range (0,80):
+            if result[0][i][j] > result [1][i][j] and result[0][i][j] > result [2][i][j]:
+                conv_result[i][j] = 0
+            elif result[1][i][j] > result [0][i][j] and result[1][i][j] > result [2][i][j]:
+                conv_result[i][j] = -5
+            else:
+                conv_result[i][j] = 5
+
+    conv_result = conv_result.unsqueeze(0).unsqueeze(0)
+    conv_result = torch.cat((conv_result, img), 1)
+    #print(conv_result)
+    #time.sleep(5)
+    return conv_result
 
 
 def action(number, click):
@@ -155,7 +178,7 @@ def get_direction():
     clicked = 0
 
     radius = pow(x, 2) + pow(y, 2)
-    if (radius > 90000):
+    if (radius > 180000):
         clicked = 1
         
     radian = math.atan2(y,x)
@@ -244,6 +267,9 @@ def train(args, global_model, optimizer, score_list):
     NLLLoss = nn.NLLLoss()
     losses = []
     clicked = 0
+
+    with open('supervised_loss', 'rb') as f:
+        losses = pickle.load(f)
 
     while True:
 
@@ -371,7 +397,7 @@ def train(args, global_model, optimizer, score_list):
             #print(torch.tensor(labels).shape)
             supervised_loss = NLLLoss(torch.cat(outputs, dim=0), torch.tensor(labels))
             #print("Supervised Loss : ", supervised_loss)
-            losses.append(supervised_loss.detach())
+            losses.append(supervised_loss.detach()) 
 
             for i in reversed(range(len(rewards))):
                 R = gamma * R + rewards[i]
@@ -458,7 +484,7 @@ def test(args, global_model, test_score):
         while is_dead == -1:
 
             state = screenshot(20,200,1700,760)
-            state = preprocess(state).cuda()
+            state = preprocess(state)
             
             #plot_screen(state)
 
@@ -483,11 +509,7 @@ def test(args, global_model, test_score):
         time.sleep(3)
         final_score = int(driver.find_element_by_tag_name('b').text)
 
-        if args.random == 0:
-            test_score['policy'].append(final_score - 10)
-        
-        else:
-            test_score['random'].append(final_score - 10)
+        test_score['Supervised'].append(final_score - 10)
 
         driver.close()
     
@@ -512,25 +534,25 @@ if __name__ == "__main__":
     global_model.apply(weights_init_bias)
     
     score = []
-    test_score = []
+    test_score = dict()
+    test_score['policy'] = []
+    test_score['random'] = []
 
-    #with open('test_score', 'rb') as f:
-    #    test_score = pickle.load(f)
+    with open('test_score', 'rb') as f:
+        test_score = pickle.load(f)
 
-    with open('final_score', 'rb') as f:
-        score = pickle.load(f)
-        
+    test_score['Supervised'] = []
     if args.test != 0:
-        global_model.load_state_dict(torch.load('model_slither'))
+        global_model.load_state_dict(torch.load('model_slither_supervised'))
         global_model.eval()
         test_score = test(args,global_model, test_score)
         #with open('test_score', 'wb') as f:
         #    pickle.dump(test_score, f)
             
     else:
-        global_model.load_state_dict(torch.load('model_slither'))
+        global_model.load_state_dict(torch.load('model_slither_supervised'))
         global_model.train()
-        optimizer = SharedAdam(global_model.parameters(), lr=args.lr)
+        optimizer = SharedAdam(global_model.parameters(), lr=1e-3)
         final_score_list = train(args, global_model, optimizer, score)
         torch.save(global_model.state_dict(), 'model_slither_supervised')
 
